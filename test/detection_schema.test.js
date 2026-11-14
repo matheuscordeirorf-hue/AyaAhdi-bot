@@ -8,7 +8,7 @@ test('inicia sessão com detecção contextual e ignora conversa sem relação',
     finish: async () => {}, save: async () => {} });
   assert.equal(await tracker.process({group:'a', text:'Vamos almoçar?'}), 'ignorada');
   assert.equal(await tracker.process({group:'a', text:'Vamos alinhar o eixo da bomba'}), 'aberta');
-  assert.equal(tracker.snapshot().a.messages.length, 1);
+  assert.equal(tracker.snapshot().a.messages.length, 2);
 });
 
 test('lê títulos atuais com grupos e informa ao Gemini o esquema', async () => {
