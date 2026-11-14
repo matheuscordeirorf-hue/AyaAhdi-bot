@@ -42,6 +42,7 @@ function createTracker({
   maxMessages = 80
 }) {
   let sessions = load() || {};
+  const recentContext = {};
   let queue = Promise.resolve();
 
   const enqueue = (fn) => {
@@ -85,8 +86,13 @@ function createTracker({
 
       const session = sessions[msg.group];
       if (!session) {
-        if (!await detect(msg)) return 'ignorada';
+        const context = recentContext[msg.group] || [];
+        const detected = await detect(msg, context);
+        recentContext[msg.group] = [...context, msg].slice(-20);
+        if (!detected) return 'ignorada';
         sessions[msg.group] = newSession(msg, t);
+        sessions[msg.group].messages = [...context, msg];
+        delete recentContext[msg.group];
         await onMessage(sessions[msg.group]);
         await persist();
         return 'aberta';
@@ -205,12 +211,13 @@ async function geminiJson(apiKey, prompt, model = 'gemini-3.1-flash-lite', media
 
 function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema = async () => ({}) }) {
   const configContext = async () => JSON.stringify(await config || {});
-  async function detect(message) {
+  async function detect(message, context = []) {
     const result = await geminiJson(apiKey, [
-      'Identifique se a mensagem descreve uma atividade de alinhamento de máquinas ou eixos, inclusive sem usar a palavra alinhamento.',
+      'Identifique pelo contexto se a conversa descreve uma atividade de alinhamento de máquinas ou eixos, mesmo sem usar a palavra alinhamento.',
       'Considere português, inglês, flexões, sinônimos e contexto técnico; não inicie coleta por conversa genérica ou ambígua.',
       'Use o nome do grupo como contexto possível da embarcação, mas não conclua atividade de alinhamento apenas pelo título.',
       'GRUPO: ' + JSON.stringify(message.groupName || ''),
+      'MENSAGENS RECENTES DO GRUPO: ' + JSON.stringify(context.map(item => ({sender:item.sender,text:item.text}))),
       'Responda somente JSON: {"alignment":true|false}.',
       'MENSAGEM: ' + JSON.stringify(message.text)
     ].join('\n'), model);
