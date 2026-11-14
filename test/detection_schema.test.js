@@ -31,6 +31,22 @@ test('lê títulos atuais com grupos e informa ao Gemini o esquema', async () =>
   } finally { global.fetch = original; }
 });
 
+test('compara a extração final com os cabeçalhos reais da planilha', async () => {
+  const original = global.fetch;
+  let prompt;
+  global.fetch = async (_url, options) => {
+    prompt = JSON.parse(options.body).contents[0].parts[0].text;
+    return {ok:true, json:async () => ({candidates:[{content:{parts:[{text:'{"status":"incomplete","vessel":null,"equipment":null,"fields":{}}'}]}}]})};
+  };
+  try {
+    const schema = [{group:'drive machine', title:'Axial Vertical', mappedAs:['axial_vertical']}];
+    const gemini = makeGeminiFunctions({apiKey:'test', config:{}, getRecordSchema:async () => schema, onExtract:async () => {}});
+    await gemini.finish({messages:[{text:'resultado'}]}, 'sincronização periódica');
+    assert.match(prompt, /Axial Vertical/);
+    assert.match(prompt, /Compare a conversa com os cabeçalhos reais/);
+  } finally { global.fetch = original; }
+});
+
 test('envia anexo ao Gemini junto do nome do grupo, legenda e esquema da planilha', async () => {
   const original = global.fetch;
   let payload;

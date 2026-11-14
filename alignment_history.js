@@ -96,19 +96,14 @@ async function recordHistory(sheets, spreadsheetId, data, sessionId, { dryRun = 
     if (conflicts.length) {
       const oldComments = String(existing[cols.comments] || '');
       const note = `Conflito para revisão: ${conflicts.join(', ')}`;
-      if (!oldComments.includes(note)) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId, range: `'Modelo alinhamento'!${columnLetter(cols.comments + 1)}${existingIndex + 1}`,
-          valueInputOption: 'RAW', requestBody: { values: [[`${oldComments} | ${note}`.trim()] ] }
-        });
-      }
-      return { status: 'conflict', row: existingIndex + 1, fields: conflicts };
+      if (!oldComments.includes(note)) merged[cols.comments] = `${oldComments} | ${note}`.trim();
     }
     const { data: updated } = await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `'Modelo alinhamento'!A${existingIndex + 1}:${columnLetter(headers.length)}${existingIndex + 1}`,
       valueInputOption: 'RAW', requestBody: { values: [merged] }
     });
+    if (conflicts.length) return { status: 'conflict', row: existingIndex + 1, fields: conflicts, updatedRange: updated.updatedRange };
     return { status: 'updated', updatedRange: updated.updatedRange };
   }
   const { data: appended } = await sheets.spreadsheets.values.append({

@@ -116,12 +116,15 @@ if (geminiEnabled) {
         observations: Object.entries(fields).filter(([key]) => /antes do ajuste|unidade das medições|Coupling gap/i.test(key))
           .map(([key, value]) => `${key}: ${value}`).join('; ')
       }, sessionId);
-      if (!['appended', 'updated', 'duplicate'].includes(result.status)) {
+      const identityNeedsClarification = checked.vessel === 'não informado' || checked.equipment === 'não informado';
+      if (!['appended', 'updated', 'duplicate'].includes(result.status) || identityNeedsClarification) {
         appendPending({
           groupJid: session.group,
           startedAt: session.startedAt,
           closedAt: new Date().toISOString(),
-          reason: result,
+          reason: identityNeedsClarification
+            ? { message: 'Embarcação ou equipamento não puderam ser associados com segurança; a linha foi registrada com não informado.', result }
+            : result,
           messages: session.messages
         });
       }
