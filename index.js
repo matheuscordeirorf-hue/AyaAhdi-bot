@@ -137,18 +137,8 @@ if (geminiEnabled) {
         return 'uncertain';
       }
     },
-    onMessage: async (session) => {
-      if (!activeSock) return;
-      const review = await gemini.ask(session);
-      const signature = `${review.missing.join('|')}#${review.known.join('|')}`;
-      if (!signature || !review.question || signature === session.lastAskedSignature) return;
-      try {
-        await activeSock.sendMessage(session.group, { text: review.question });
-        session.lastAskedSignature = signature;
-      } catch {
-        console.error('Não foi possível enviar a pergunta da sessão.');
-      }
-    },
+    // Monitoramento silencioso: nunca enviar perguntas ao grupo.
+    onMessage: async () => {},
     finish: async (session, reason) => {
       try {
         await gemini.finish(session, reason);
@@ -228,7 +218,7 @@ async function startBot() {
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') console.log(geminiEnabled
-      ? 'Coletor conectado; perguntas de alinhamento estão ativas.'
+      ? 'Coletor conectado em modo silencioso.'
       : 'Coletor conectado em modo silencioso.');
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -258,4 +248,5 @@ startBot().catch((error) => {
   console.error('Não foi possível iniciar o coletor:', error.message);
   process.exit(1);
 });
+
 
