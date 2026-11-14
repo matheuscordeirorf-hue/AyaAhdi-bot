@@ -249,6 +249,7 @@ function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema
       'related: acrescenta, confirma ou corrige informação da mesma atividade/equipamento.',
       'unrelated: conversa paralela claramente sem relação com o alinhamento ativo.',
       'new_activity: há evidência clara de novo alinhamento ou equipamento distinto (por exemplo, troca explícita de DG2 para DG4).',
+      'Inclua também como new_activity quando a conversa identificar claramente outra embarcação/MCP; se a mensagem disser que complementa ou corrige um registro anterior, não misture com o equipamento atual.',
       'uncertain: não é seguro decidir. Não misture equipamentos, não deduza nem use conhecimento externo.',
       'Se ainda não foi identificado equipamento, dados de alinhamento podem ser related. Uma mensagem ambígua deve ser uncertain.',
       'CONVERSA: ' + JSON.stringify(transcript)
@@ -267,11 +268,13 @@ function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema
       'Extraia um único registro de alinhamento de eixo a partir destas mensagens de um grupo de manutenção.',
       'Responda somente JSON no formato: {"status":"ready|ambiguous|incomplete","vessel":{"value":"texto literal","message":1,"quote":"trecho literal"},"equipment":{"value":"texto literal","message":1,"quote":"trecho literal"},"fields":{"equipment_class":null,"maker":null,"model":null,"stationary_equipment_class":null,"stationary_maker":null,"stationary_model":null,"date":null,"motivation":null,"executor":null,"method":null,"axial_vertical":null,"axial_horizontal":null,"radial_vertical":null,"radial_horizontal":null,"coupling_gap":null,"standard":null,"axial_tolerance":null,"radial_tolerance":null,"coupling_gap_tolerance":null,"document":null,"measurement_unit":null,"axial_vertical_before":null,"axial_horizontal_before":null,"radial_vertical_before":null,"radial_horizontal_before":null}}.',
       'Use o título do grupo como evidência contextual da embarcação. Use a configuração online (taxonomia, glossário e combinações) para reconhecer nomes alternativos. equipment é a identificação do conjunto alinhado, não uma classe genérica.',
+      'Compare a conversa com os cabeçalhos reais da planilha a seguir. Mapeie apenas para campos que existam nesses cabeçalhos e respeite o grupo dos títulos repetidos. Cabeçalhos sem correspondência permanecem sem informação.',
       'Extraia apenas valores que as mensagens afirmam explicitamente. Mantenha tolerâncias separadas de medições. Registre medições após ajuste nas quatro direções apenas quando isso estiver explícito; medições anteriores ficam nos campos *_before. Não calcule, converta, complete, atribua autoria nem adivinhe dados ausentes.',
       'Cada valor não nulo precisa apontar para o número da mensagem e conter uma quote literal daquela mensagem que inclua o valor. Se houver dois equipamentos, conflito, troca incerta ou evidência insuficiente, marque ambiguous ou incomplete.',
       'Use status ready somente quando vessel, equipment e ao menos um campo de histórico estiverem claros. Use as grafias e unidades originais.',
       'MOTIVO DE FECHAMENTO: ' + reason,
       'CONFIGURAÇÃO ONLINE (referência para identificar valores canônicos; nunca invente): ' + await configContext(),
+      'CABEÇALHOS E GRUPOS DA PLANILHA: ' + JSON.stringify(await getRecordSchema()),
       'MENSAGENS: ' + JSON.stringify(transcript)
     ].join('\n'), model);
     await onExtract(session, reason, result, transcript);
