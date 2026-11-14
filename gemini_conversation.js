@@ -2,6 +2,12 @@ const fs = require('fs');
 
 const DECISIONS = new Set(['related', 'unrelated', 'new_activity', 'uncertain']);
 const FIELD_LABELS = {
+  equipment_class: 'Equipment Class',
+  maker: 'Maker',
+  model: 'Model',
+  stationary_equipment_class: 'Stationary Equipment Class',
+  stationary_maker: 'Stationary Maker',
+  stationary_model: 'Stationary Model',
   date: 'Data',
   motivation: 'Motivacao',
   executor: 'Executor',
@@ -11,6 +17,8 @@ const FIELD_LABELS = {
   radial_vertical: 'Radial vertical',
   radial_horizontal: 'Radial horizontal',
   coupling_gap: 'Coupling gap',
+  standard: 'Padrão',
+  document: 'Document',
   axial_tolerance: 'Axial tolerance',
   radial_tolerance: 'Radial tolerance',
   coupling_gap_tolerance: 'Coupling gap tolerance',
@@ -26,6 +34,7 @@ function createTracker({
   detect = async msg => /\b(?:alinhamento|alignment)\b/i.test(msg.text),
   finish,
   onMessage = async () => {},
+  onTick = async () => {},
   save,
   load = () => ({}),
   now = Date.now,
@@ -110,7 +119,11 @@ function createTracker({
       await persist();
       return decision;
     }),
-    tick: () => enqueue(() => expire(now())),
+    tick: () => enqueue(async () => {
+      await expire(now());
+      for (const session of Object.values(sessions)) await onTick(session);
+      await persist();
+    }),
     snapshot: () => JSON.parse(JSON.stringify(sessions))
   };
 }
@@ -135,7 +148,7 @@ function fileStore(file) {
   };
 }
 
-async function geminiJson(apiKey, prompt, model = 'gemini-3.1-flash-lite') {
+async function geminiJson(apiKey, prompt, model = 'gemini-3.1-flash-lite', media = []) {
   if (!apiKey) throw new Error('GEMINI_API_KEY ausente');
 
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
@@ -153,7 +166,9 @@ async function geminiJson(apiKey, prompt, model = 'gemini-3.1-flash-lite') {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', parts: [{ text: prompt }, ...media.map(item => ({
+            inline_data: { mime_type: item.mimeType, data: Buffer.from(item.data).toString('base64') }
+          }))] }],
           generationConfig: { responseMimeType: 'application/json', temperature: 0 }
         }),
         signal: controller.signal
@@ -194,10 +209,24 @@ function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema
     const result = await geminiJson(apiKey, [
       'Identifique se a mensagem descreve uma atividade de alinhamento de máquinas ou eixos, inclusive sem usar a palavra alinhamento.',
       'Considere português, inglês, flexões, sinônimos e contexto técnico; não inicie coleta por conversa genérica ou ambígua.',
+      'Use o nome do grupo como contexto possível da embarcação, mas não conclua atividade de alinhamento apenas pelo título.',
+      'GRUPO: ' + JSON.stringify(message.groupName || ''),
       'Responda somente JSON: {"alignment":true|false}.',
       'MENSAGEM: ' + JSON.stringify(message.text)
     ].join('\n'), model);
     return result?.alignment === true;
+  }
+  async function inspectAttachment({ caption, groupName, fileName, mimeType, data }) {
+    const result = await geminiJson(apiKey, [
+      'Leia o anexo técnico e extraia fielmente informações de alinhamento de máquinas/eixos que possam preencher a planilha.',
+      'Compare o conteúdo com os cabeçalhos informados no esquema: identifique embarcação, equipamento/tag, classe, fabricante, modelo, data, motivação, executor, método, medições, tolerâncias, folga e observações quando presentes.',
+      'Preserve números e unidades. Separe tolerâncias de medições. Não calcule, complete nem invente fatos. Retorne JSON {"summary":"texto conciso com os dados legíveis"}; se não houver dado de alinhamento, summary vazio.',
+      'NOME DO GRUPO: ' + JSON.stringify(groupName || ''),
+      'ARQUIVO: ' + JSON.stringify(fileName || ''),
+      'LEGENDA: ' + JSON.stringify(caption || ''),
+      'CABEÇALHOS DA PLANILHA: ' + JSON.stringify(await getRecordSchema())
+    ].join('\n'), model, [{ mimeType, data }]);
+    return typeof result?.summary === 'string' ? result.summary.trim() : '';
   }
   async function classify(previousMessages, currentMessage) {
     const transcript = [...previousMessages, currentMessage].map((message, index) => ({
@@ -229,8 +258,8 @@ function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema
     }));
     const result = await geminiJson(apiKey, [
       'Extraia um único registro de alinhamento de eixo a partir destas mensagens de um grupo de manutenção.',
-      'Responda somente JSON no formato: {"status":"ready|ambiguous|incomplete","vessel":{"value":"texto literal","message":1,"quote":"trecho literal"},"equipment":{"value":"texto literal","message":1,"quote":"trecho literal"},"fields":{"date":null,"motivation":null,"executor":null,"method":null,"axial_vertical":null,"axial_horizontal":null,"radial_vertical":null,"radial_horizontal":null,"coupling_gap":null,"axial_tolerance":null,"radial_tolerance":null,"coupling_gap_tolerance":null,"measurement_unit":null,"axial_vertical_before":null,"axial_horizontal_before":null,"radial_vertical_before":null,"radial_horizontal_before":null}}.',
-      'Para vessel e equipment, extraia somente se estiverem explicitamente identificados nas mensagens. equipment é o equipamento alinhado, como DG2 ou DG4; não confunda com classe genérica de equipamento.',
+      'Responda somente JSON no formato: {"status":"ready|ambiguous|incomplete","vessel":{"value":"texto literal","message":1,"quote":"trecho literal"},"equipment":{"value":"texto literal","message":1,"quote":"trecho literal"},"fields":{"equipment_class":null,"maker":null,"model":null,"stationary_equipment_class":null,"stationary_maker":null,"stationary_model":null,"date":null,"motivation":null,"executor":null,"method":null,"axial_vertical":null,"axial_horizontal":null,"radial_vertical":null,"radial_horizontal":null,"coupling_gap":null,"standard":null,"axial_tolerance":null,"radial_tolerance":null,"coupling_gap_tolerance":null,"document":null,"measurement_unit":null,"axial_vertical_before":null,"axial_horizontal_before":null,"radial_vertical_before":null,"radial_horizontal_before":null}}.',
+      'Use o título do grupo como evidência contextual da embarcação. Use a configuração online (taxonomia, glossário e combinações) para reconhecer nomes alternativos. equipment é a identificação do conjunto alinhado, não uma classe genérica.',
       'Extraia apenas valores que as mensagens afirmam explicitamente. Mantenha tolerâncias separadas de medições. Registre medições após ajuste nas quatro direções apenas quando isso estiver explícito; medições anteriores ficam nos campos *_before. Não calcule, converta, complete, atribua autoria nem adivinhe dados ausentes.',
       'Cada valor não nulo precisa apontar para o número da mensagem e conter uma quote literal daquela mensagem que inclua o valor. Se houver dois equipamentos, conflito, troca incerta ou evidência insuficiente, marque ambiguous ou incomplete.',
       'Use status ready somente quando vessel, equipment e ao menos um campo de histórico estiverem claros. Use as grafias e unidades originais.',
@@ -259,7 +288,7 @@ function makeGeminiFunctions({ apiKey, model, onExtract, config, getRecordSchema
     return { missing, known, question };
   }
 
-  return { detect, classify, finish, ask };
+  return { detect, classify, finish, ask, inspectAttachment };
 }
 
 function verifyExtraction(result, transcript) {
@@ -274,21 +303,19 @@ function verifyExtraction(result, transcript) {
     return item.value.trim();
   };
 
-  const vessel = verifiedValue(result.vessel);
-  const equipment = verifiedValue(result.equipment);
-  if (!vessel || !equipment) return { ok: false, reason: 'embarcação ou equipamento sem evidência literal' };
+  const vessel = verifiedValue(result.vessel) || 'não informado';
+  const equipment = verifiedValue(result.equipment) || 'não informado';
 
   const fields = {};
   for (const [key, label] of Object.entries(FIELD_LABELS)) {
     const value = verifiedValue(result.fields?.[key]);
     if (value) fields[label] = value;
   }
-  if (!Object.keys(fields).length) return { ok: false, reason: 'nenhum campo de histórico comprovado' };
-
   const input = [`Vessel: ${vessel}`, `Equipment: ${equipment}`];
   for (const [label, value] of Object.entries(fields)) input.push(`${label}: ${value}`);
   return { ok: true, text: input.join('\n'), vessel, equipment, fields };
 }
 
 module.exports = { createTracker, fileStore, geminiJson, makeGeminiFunctions, verifyExtraction };
+
 
