@@ -1,6 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapHeaders, makeRow } = require('../alignment_history');
+const { mapHeaders, makeRow, mergeKnownFields } = require('../alignment_history');
+
+test('completa campos desconhecidos sem sobrescrever dados e sinaliza divergências', () => {
+  const merged = mergeKnownFields({ vessel: 'BRAM Atlas', equipment: 'não informado', axial: '0,02' },
+    { vessel: 'BRAM Atlas', equipment: 'MCP1', axial: '0,03', date: null });
+  assert.deepEqual(merged.fields, { vessel: 'BRAM Atlas', equipment: 'MCP1', axial: '0,02' });
+  assert.deepEqual(merged.conflicts, ['axial']);
+});
 
 test('mapeia títulos por nomes e distingue colunas repetidas pelo grupo', () => {
   const mapped = mapHeaders([
@@ -15,4 +22,5 @@ test('mapeia títulos por nomes e distingue colunas repetidas pelo grupo', () =>
   assert.equal(row[2], 'DG1');
   assert.equal(row[24], 'session:abc');
 });
+
 
