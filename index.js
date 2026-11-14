@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const { google } = require('googleapis');
 google.options({ fetchImplementation: fetch });
@@ -73,6 +73,7 @@ function getMessageText(message) {
 let alignmentTracker = null;
 let activeSock = null;
 let alignmentConfigPromise = null;
+const groupTitleCache = new Map();
 if (geminiEnabled) {
   const { createTracker, fileStore, makeGeminiFunctions, verifyExtraction } = require('./gemini_conversation');
   const { loadAlignmentConfig } = require('./alignment_config');
@@ -103,15 +104,19 @@ if (geminiEnabled) {
       const fields = checked.fields || {};
       const result = await history.recordHistory(sheets, spreadsheetId, {
         vessel: checked.vessel, equipment: checked.equipment,
+        class: fields['Equipment Class'], maker: fields.Maker, model: fields.Model,
+        stationary_class: fields['Stationary Equipment Class'], stationary_maker: fields['Stationary Maker'],
+        stationary_model: fields['Stationary Model'], document: fields.Document,
         date: fields.Data, motivation: fields.Motivacao, executor: fields.Executor, method: fields.Metodo,
         axial_vertical: fields['Axial vertical'], axial_horizontal: fields['Axial horizontal'],
         radial_vertical: fields['Radial vertical'], radial_horizontal: fields['Radial horizontal'],
+        coupling_gap: fields['Coupling gap'], standard: fields['Padrão'],
         axial_tolerance: fields['Axial tolerance'], radial_tolerance: fields['Radial tolerance'],
         gap_tolerance: fields['Coupling gap tolerance'],
         observations: Object.entries(fields).filter(([key]) => /antes do ajuste|unidade das medições|Coupling gap/i.test(key))
           .map(([key, value]) => `${key}: ${value}`).join('; ')
       }, sessionId);
-      if (result.status !== 'appended' && result.status !== 'duplicate') {
+      if (!['appended', 'updated', 'duplicate'].includes(result.status)) {
         appendPending({
           groupJid: session.group,
           startedAt: session.startedAt,
@@ -137,8 +142,12 @@ if (geminiEnabled) {
         return 'uncertain';
       }
     },
-    // Monitoramento silencioso: nunca enviar perguntas ao grupo.
+    // Monitoramento silencioso; dados são sincronizados periodicamente.
     onMessage: async () => {},
+    onTick: async (session) => {
+      try { await gemini.finish(session, 'sincronização periódica'); }
+      catch { console.error('Falha ao sincronizar dados de alinhamento.'); }
+    },
     finish: async (session, reason) => {
       try {
         await gemini.finish(session, reason);
@@ -155,27 +164,58 @@ if (geminiEnabled) {
     },
     save: (state) => store.save(state),
     load: () => store.load(),
-    timeoutMs: 15 * 60 * 1000
+    timeoutMs: Number.MAX_SAFE_INTEGER,
+    maxMessages: 5000
   });
 
   setInterval(() => {
     alignmentTracker.tick().catch((error) => {
-      console.error('Falha ao encerrar sessão de alinhamento:', error.message);
+      console.error('Falha ao sincronizar sessões de alinhamento:', error.message);
     });
-  }, 30 * 1000).unref();
+  }, 5 * 60 * 1000).unref();
 }
 
 async function handleMessage(sock, msg) {
   const groupJid = msg.key.remoteJid || '';
   if (!groupJid.endsWith('@g.us') || msg.key.fromMe) return;
 
-  const text = getMessageText(msg.message).trim();
-  if (!text) return;
+  let text = getMessageText(msg.message).trim();
+  const content = unwrapMessage(msg.message);
+  const image = content.imageMessage;
+  const document = content.documentMessage;
+  const attachment = image || document;
+  if (!text && !attachment) return;
 
   const messageId = msg.key.id;
   if (messageId && seenIds.has(messageId)) return;
 
   if (geminiEnabled) {
+    let groupName = groupTitleCache.get(groupJid)?.name || '';
+    if (!groupName || Date.now() - groupTitleCache.get(groupJid).time > 60 * 60 * 1000) {
+      try {
+        groupName = (await sock.groupMetadata(groupJid)).subject || '';
+        groupTitleCache.set(groupJid, { name: groupName, time: Date.now() });
+      } catch { /* nome do grupo pode não estar disponível temporariamente */ }
+    }
+    if (attachment) {
+      const mimeType = image?.mimetype || document?.mimetype || '';
+      const fileName = document?.fileName || '';
+      if (!/^image\/(jpeg|png|webp)$|^application\/pdf$/i.test(mimeType)) {
+        text += `\n[Anexo ${fileName || mimeType || 'não identificado'}: formato não suportado para leitura]`;
+      } else {
+        try {
+          const data = await downloadMediaMessage(msg, 'buffer', {}, { logger: P({ level: 'silent' }) });
+          if (data.length > 20 * 1024 * 1024) throw new Error('Anexo excede 20 MB');
+          const summary = await gemini.inspectAttachment({ caption: text, groupName, fileName, mimeType, data });
+          text = [text, summary && `Conteúdo lido do anexo: ${summary}`].filter(Boolean).join('\n');
+        } catch (error) {
+          appendPending({ messageId: msg.key.id, groupJid, groupName, fileName, reason: `não foi possível ler o anexo: ${error.message}` });
+          console.error('Não foi possível ler um anexo da conversa.');
+          return;
+        }
+      }
+    }
+    if (!text.trim()) return;
     const timestamp = msg.messageTimestamp
       ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
       : new Date().toISOString();
@@ -184,7 +224,8 @@ async function handleMessage(sock, msg) {
       id: messageId || '',
       timestamp,
       sender: msg.pushName || '',
-      text
+      groupName,
+      text: groupName ? `[Grupo: ${groupName}]\n${text}` : text
     });
     if (outcome !== 'ignorada' && messageId) {
       seenIds.add(messageId);
