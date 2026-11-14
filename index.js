@@ -71,6 +71,7 @@ function getMessageText(message) {
 }
 
 let alignmentTracker = null;
+let gemini = null;
 let activeSock = null;
 let alignmentConfigPromise = null;
 const groupTitleCache = new Map();
@@ -80,7 +81,7 @@ if (geminiEnabled) {
   const history = require('./alignment_history');
   const store = fileStore(sessionsFile);
   alignmentConfigPromise = loadAlignmentConfig(sheets, process.env.CONFIG_SPREADSHEET_ID);
-  const gemini = makeGeminiFunctions({
+  gemini = makeGeminiFunctions({
     apiKey: process.env.GEMINI_API_KEY,
     model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
     config: alignmentConfigPromise,
@@ -133,8 +134,8 @@ if (geminiEnabled) {
   });
 
   alignmentTracker = createTracker({
-    detect: async msg => {
-      try { return await gemini.detect(msg); }
+    detect: async (msg, context) => {
+      try { return await gemini.detect(msg, context); }
       catch { console.error('Falha ao identificar atividade com Gemini.'); return false; }
     },
     classify: async (previous, current) => {
