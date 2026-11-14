@@ -34,6 +34,31 @@ test('atualiza os campos desconhecidos na mesma linha da sessão', async () => {
   assert.match(updated[3], /session:session-1/);
 });
 
+test('preenche outros campos vazios e preserva o conhecido quando há conflito', async () => {
+  const rows = [
+    ['Drive Machine', '', 'Histórico', 'Reference'],
+    ['Vessel', 'Equipment / Tag', 'Data', 'Comments'],
+    ['BRAM Atlas', 'DG1', 'não informado', 'session:session-conflict']
+  ];
+  let updated;
+  const sheets = { spreadsheets: { values: {
+    get: async () => ({ data: { values: rows } }),
+    update: async ({ requestBody }) => {
+      updated = requestBody.values[0];
+      rows[2] = updated;
+      return { data: { updatedRange: "'Modelo alinhamento'!A3:D3" } };
+    }
+  } } };
+
+  const result = await recordHistory(sheets, 'test', {
+    vessel: 'BRAM Brasil', equipment: 'DG2', date: '2026-11-14'
+  }, 'session-conflict');
+
+  assert.equal(result.status, 'conflict');
+  assert.deepEqual(updated.slice(0, 3), ['BRAM Atlas', 'DG1', '2026-11-14']);
+  assert.match(updated[3], /Conflito para revisão: Vessel, Equipment \/ Tag/);
+});
+
 test('mapeia títulos por nomes e distingue colunas repetidas pelo grupo', () => {
   const mapped = mapHeaders([
     ['Drive Machine', '', '', '', '', 'Histórico', '', '', '', '', '', '', '', '', 'Pés de fixação', 'Tolerâncias', '', '', 'Coupling', 'Máquina Estacionária', '', '', '', 'Reference'],
