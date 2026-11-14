@@ -1,5 +1,18 @@
 const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
 
+// Preserva dados conhecidos e retorna conflitos para revisão humana.
+function mergeKnownFields(existing, incoming) {
+  const result = { ...existing };
+  const conflicts = [];
+  const missing = value => value == null || String(value).trim() === '' || normalize(value) === 'nao informado';
+  for (const [key, value] of Object.entries(incoming)) {
+    if (missing(value)) continue;
+    if (missing(result[key])) result[key] = value;
+    else if (normalize(result[key]) !== normalize(value)) conflicts.push(key);
+  }
+  return { fields: result, conflicts };
+}
+
 const HEADER_KEYS = {
   vessel: ['vessel', 'embarcacao', 'navio'], equipment: ['equipment / tag', 'equipment/tag', 'tag do equipamento', 'equipment id'],
   class: ['equipment class', 'classe do equipamento'], maker: ['maker', 'fabricante'], model: ['model', 'modelo'],
@@ -69,5 +82,6 @@ async function recordHistory(sheets, spreadsheetId, data, sessionId, { dryRun = 
   return { status: 'appended', updatedRange: appended.updates?.updatedRange };
 }
 
-module.exports = { mapHeaders, makeRow, getRecordSchema, recordHistory };
+module.exports = { mapHeaders, makeRow, getRecordSchema, recordHistory, mergeKnownFields };
+
 
